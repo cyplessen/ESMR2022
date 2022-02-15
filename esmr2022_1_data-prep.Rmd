@@ -1,0 +1,904 @@
+---
+title: "ESMR 2022 Multiverse Meta-Analysis"
+subtitle: "1. Data Preperation"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+knit: (function(inputFile, encoding) {
+      rmarkdown::render(inputFile, 
+      encoding = encoding, 
+      output_dir = "html") })
+output:
+  html_document:
+    code_folding: show
+    highlight: pygment
+    theme: cerulean
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # data cleaning
+library(metafor)   # calculate meta-analytical models
+library(puniform)  # calculate p-uniform*
+set.seed(42)       # set seed for simulating studies
+```
+
+The code is adapted from [this paper](https://doi.org/10.1027/2151-2604/a000357). 
+
+<br>
+
+# Scenario A: True Effect ~ *g* = 0.8
+
+## Simulate Data 
+
+I simulate a scenario with a true difference between 2 groups, which will be represented as Hedges g. To be able to show systematic patterns for several which factors, I introduce some systematic differences:
+- females will show larger differences
+- therapy A will show larger differences
+- therapy = "C" and non adults show even larger differences
+- and there will be some random outliers
+
+### Female data set
+```{r}
+data_female <- tibble( # I 
+  es_id = 1:20, # unique effect size ids
+  study_name = c(paste("Study", 1:10), paste("Study", sort(rep(11:15, 2))))) %>% # unique study id
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5),
+         m2i = rnorm(1, mean = 8, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         n =n1i + n2i,
+         
+         # WHICH FACTORS
+         age_group = sample(c("adults", "non-adults"), 1), # age should be random for this example
+         sex = "female",
+         therapy = "A")
+```
+
+
+### Male data set
+```{r}
+data_male <- tibble(
+  es_id = 21:40,
+  study_name = c(paste("Study", 16:25), paste("Study", sort(rep(26:30, 2))))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
+         m2i = rnorm(1, mean = 9, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         n = n1i + n2i,
+         
+         # WHICH FACTORS
+         age_group = sample(c("adults", "non-adults"), 1),
+         sex = "male",
+         therapy = "B")
+```
+
+### Therapy = "C" and non adults show even larger differneces
+```{r}
+data_similar <- tibble(
+  es_id = 41:60,
+  study_name = c(paste("Study", 31:40), paste("Study", sort(rep(41:45, 2))))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
+         m2i = rnorm(1, mean = 7, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         n = n1i + n2i,
+         
+         # WHICH FACTORS
+         age_group = "non-adults",
+         sex = sample(c("male", "female"), 1),
+         therapy = "C")
+```
+
+### And we have some very strong outliers 
+```{r}
+data_outlier <- tibble(
+  es_id = 61:65,
+  study_name = c(paste("Study",46:50))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = .22), 
+         m2i = rnorm(1, mean = 7, sd = .22),
+         sd1i = rnorm(1, mean = 1, sd = 0.1),
+         sd_2 = rnorm(1, mean = 1, sd = 0.1),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         n =n1i + n2i,
+         
+         # WHICH FACTORS
+         age_group = sample(c("adults", "non-adults"), 1),
+         sex = sample(c("male", "female"), 1),
+         therapy = sample(c("A", "B"), 1))
+```
+
+### Binding data sets
+```{r}
+data_sim <- bind_rows(data_female, data_male, data_similar, data_outlier)
+```
+
+
+### Calculating Hedges *g*
+
+```{r}
+data_sim <- escalc(measure = "SMD", 
+                   data = data_sim, # calculate  Hedges g = yi, variance of g = vi, and se
+                   m1i = m1i,
+                   sd1i = sd1i,
+                   n1i = n1i,
+                   m2i = m2i,
+                   sd2i = sd_2,
+                   n2i = n2i) %>% 
+  data.frame(.)
+```
+
+<br>
+
+### Create Outlier Variable
+
+Here I create an outlier variable, that could also include different cutoffs, for example: d-poop, which I personally find both hilarious and reasonable. 
+I base this on  DOI: 10.1177/0956797609356283: 
+> "In a pretest, we confirmed that chocolates were more desirable than feces. A separate group of participants (n = 20) rated how appealing, positive, likeable, attractive, and interesting both objects were. It should come as no surprise that averages across these qualities indicated that the chocolates (M = 5.5) were more desirable than the feces (M = 2.1), paired t(19) = 17.44, prep = .99, p < .001, d = 4.52."
+
+Any effect size larger than this seems unreasonable to me and must be an outlier. It just must.
+
+```{r}
+data_sim <- data_sim %>% 
+  cbind(ci_lower, ci_upper) %>% 
+  relocate(study_name, yi, ci_lower, ci_upper) %>% 
+  mutate(outlier = case_when(
+    yi > 3 ~ "ES > 3",
+    TRUE ~ "ES > 3 removed",
+      )) 
+```
+
+<br>
+
+### Save Data set
+
+```{r}
+write.csv2(file = "data/data_sim.csv", 
+           data_sim)
+```
+
+<br>
+
+## Specification Curve
+
+All Which and How factors need to be specified in this order. 
+
+### Which factors
+```{r}
+age_group     <- c(unique(data_sim$age_group), "all groups")
+sex      <- c(unique(data_sim$sex), "all sexes")
+therapy  <- c(unique(data_sim$therapy), "all therapy")
+outlier       <- c("ES > 3 removed", "all es")
+```
+
+
+### How Factors
+```{r}
+ma_method     <- c("3-level", "rve", "reml", "fe", "uw", "p-uniform")
+```
+
+
+### Construct all specifications
+```{r}
+specifications_grid <- expand.grid(
+  age_group = age_group,
+  sex = sex,
+  therapy = therapy,
+  outlier = outlier,
+  ma_method = ma_method)
+head(specifications_grid)
+
+number_specs <- nrow(specifications_grid)
+number_specs
+```
+
+<br>
+
+### Empty specifications frame to save means, CI, p values and k
+
+```{r }
+specifications <- data.frame(specifications_grid, 
+                             mean = rep(NA, nrow(specifications_grid)), 
+                             lb = rep(NA, nrow(specifications_grid)), 
+                             ub = rep(NA, nrow(specifications_grid)), 
+                             p = rep(NA, nrow(specifications_grid)), 
+                             k = rep(NA, nrow(specifications_grid)))
+head(specifications)
+```
+
+<br>
+
+### Giant for loop aka the specification analyis aka the multiverse meta-analysis
+
+```{r}
+for(i in 1:nrow(specifications)) {
+  
+  dat <- as.data.frame(data_sim)
+  
+  # Determine specification subsets by using "Which" factors 
+  
+  # age_group 
+  if(specifications$age_group[i] == "adults") {
+    dat <- dat[dat$age_group == "adults", ] 
+  } else {
+    if(specifications$age_group[i] == "non-adults") {
+      dat <- dat[dat$age_group == "non-adults", ] 
+    }
+  }
+  
+  # sex  
+  if(specifications$sex[i] == "female") {
+    dat <- dat[dat$sex == "female", ] 
+  } else {
+    if(specifications$sex[i] == "male") {
+      dat <- dat[dat$sex == "male", ] 
+    }
+  }
+  
+  # rob
+  if(specifications$therapy[i] == "A") {
+    dat <- dat[dat$therapy == "A", ] 
+  } else {
+    if(specifications$therapy[i] == "B") {
+      dat <- dat[dat$therapy == "B", ] 
+    } else {
+      if(specifications$therapy[i] == "C") {
+        dat <- dat[dat$therapy == "C", ] 
+      }
+    }
+  }
+  
+  # outlier 
+  if(specifications$outlier[i] == "ES > 3 removed") {
+    dat <- dat[dat$outlier == "ES > 3 removed", ] 
+  }
+  
+  
+  # only compute meta-analytic summary effects for specification subsets with at least 2 studies/samples.
+  if(nrow(dat) < 2) next
+  
+  # Save which study/sample IDs were selected by the "Which" factors for a given specification.
+  specifications$set[i] <- paste(rownames(dat), collapse = ",")
+  
+  if(specifications$ma_method[i] == "3-level" | specifications$ma_method[i] == "rve" & sum(duplicated(dat$study_name)) > 0) { # nested effect sizes detected) if more duplicated study id
+    mod1 <- rma.mv(data = dat, 
+                   yi = yi, 
+                   V = vi, 
+                   method = "REML", 
+                   control=list(optimizer="optim", optmethod="Nelder-Mead"),
+                   random = list(~1 | es_id,
+                                 ~1 | study_name), 
+                   sparse=TRUE)
+    
+    if(specifications$ma_method[i] == "3-level") mod <- mod1
+    
+    if(specifications$ma_method[i] == "rve") mod <- robust(mod1, cluster=dat$study, clubSandwich=TRUE)
+    
+    
+  } else {
+    if(specifications$ma_method[i] == "reml" & sum(duplicated(dat$study_name)) > 0) { 
+      # average data in case of nested structure
+      
+      dat <- dat %>% 
+        select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+        escalc(yi=yi, vi=vi, data=.)
+      dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+      mod <- rma(yi = dat$yi, vi = dat$vi, 
+                 method = "REML", 
+                 control = list(stepadj = 0.5,
+                                maxiter = 2000))  
+      
+    } else {
+      if(specifications$ma_method[i] == "reml" & sum(duplicated(dat$study_name)) == 0) {
+        mod <- rma(yi = dat$yi, vi = dat$vi, 
+                   method = "REML", 
+                   control = list(stepadj = 0.5,
+                                  maxiter = 2000))  
+        
+      } else {
+        if(specifications$ma_method[i] == "fe") {
+          dat <- dat %>% 
+            select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+            escalc(yi=yi, vi=vi, data=.)
+          dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+          mod <- rma(yi = dat$yi, vi = dat$vi, 
+                     method = "FE")  
+        } else {
+          if(specifications$ma_method[i] == "uw") {
+            dat <- dat %>% 
+              select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+              escalc(yi=yi, vi=vi, data=.)
+            dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+            mod <- rma(yi = dat$yi, vi = dat$vi,
+                       method = "FE", 
+                       weights = 1/nrow(dat))
+          } else {
+            if(specifications$ma_method[i] == "p-uniform") {
+              dat <- dat %>% 
+                select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+                escalc(yi=yi, vi=vi, data=.)
+              dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+              mod <- puni_star(yi = dat$yi, vi = dat$vi, 
+                               side = "right")
+              mod$b <- mod$est
+              mod$pval <- mod$pval.0 
+            }
+          }
+        }
+      }
+    }
+  }
+  specifications$mean[i] <- mod$b[[1]]
+  specifications$lb[i] <- mod$ci.lb[[1]]
+  specifications$ub[i] <- mod$ci.ub[[1]]
+  specifications$p[i] <- mod$pval[[1]]
+  specifications$k[i] <- nrow(dat)
+}
+```
+
+```{r}
+specifications
+```
+
+<br>
+
+## Cleaning specifications
+
+### Only keep specifications with at least 2 studies/samples
+
+```{r clean-specifications-minimum-2-studies}
+specifications_full <- specifications[complete.cases(specifications),]
+```
+
+<br>
+
+### Only keep unique study/sample subsets resulting from "Which" factor combinations.
+
+```{r clean-specifications-keep-unique-sets}
+specifications_full <- specifications_full[!duplicated(specifications_full[, c("mean", "set", "ma_method")]), ]
+```
+
+<br>
+
+### Indicator if all studies are included in the set
+
+```{r clean-specifications-add-indicator}
+specifications_full$full_set <- as.numeric(specifications_full$set == paste(1:nrow(data_sim), collapse =",", sep = ""))
+```
+
+<br>
+
+## Descriptives of specifications
+
+<br>
+
+### Overall
+
+```{r}
+specifications_full %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   mean_lb = mean(lb),
+                   mean_ub = mean(ub),
+                   n =n()) %>% 
+  mutate(set = "full")
+```
+
+<br>
+
+### Age Group
+
+```{r}
+specifications_full %>% 
+  group_by(age_group) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+
+<br>
+
+### sex
+```{r}
+specifications_full %>% 
+  group_by(sex) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+<br>
+
+
+### outlier
+```{r}
+specifications_full %>% 
+  group_by(outlier) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+
+```{r}
+specifications_full %>% 
+  group_by(therapy) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+<br>
+
+### ma_method
+```{r}
+specifications_full %>% 
+  group_by(ma_method) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max_g = max(mean),
+                   min_g = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+<br>
+
+### k
+```{r}
+specifications_full %>% 
+  ggplot(aes(x = k)) + 
+  geom_histogram(bins = 30) +
+  theme_classic()
+```
+
+<br>
+
+## Saving Specifications
+```{r}
+write.csv2(file = "data/specifications_full.csv", 
+           specifications_full)
+```
+
+<br>
+
+# Scenario B: True Effect ~ *g* = 0.0
+
+## Simulate Data
+
+I simulate a data set as above, but with no a null effect and some outliers
+```{r}
+data_female <- tibble( # I 
+  es_id = 1:20, # unique effect size ids
+  study_name = c(paste("Study", 1:10), paste("Study", sort(rep(11:15, 2))))) %>% # unique study id
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 2),
+         m2i = rnorm(1, mean = 10, sd = 2),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         
+         n =n1i + n2i,
+         age_group = sample(c("adults", "non-adults"), 1), # age should be random for this example
+         sex = "female",
+         therapy = "A")
+
+data_male <- tibble(
+  es_id = 21:40,
+  study_name = c(paste("Study", 16:25), paste("Study", sort(rep(26:30, 2))))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 2), 
+         m2i = rnorm(1, mean = 10, sd = 2),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         
+         n =n1i + n2i,
+         age_group = sample(c("adults", "non-adults"), 1),
+         sex = "male",
+         therapy = "A")
+
+data_similar<- tibble(
+  es_id = 41:60,
+  study_name = c(paste("Study", 31:40), paste("Study", sort(rep(41:45, 2))))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = 2), 
+         m2i = rnorm(1, mean = 10, sd = 2),
+         sd1i = rnorm(1, mean = 2, sd = 0.5),
+         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         n =n1i + n2i,
+         age_group = sample(c("adults", "non-adults"), 1),
+         sex = "male",
+         therapy = "B")
+
+data_male_outlier <- tibble(
+  es_id = 61:65,
+  study_name = c(paste("Study",46:50))) %>% 
+  rowwise() %>%
+  mutate(m1i = rnorm(1, mean = 10, sd = .22), 
+         m2i = rnorm(1, mean = 9, sd = .22),
+         sd1i = rnorm(1, mean = 1, sd = 0.1),
+         sd_2 = rnorm(1, mean = 1, sd = 0.1),
+         n1i = sample(10:100, 1),
+         n2i = n1i,
+         
+         n =n1i + n2i,
+         age_group = sample(c("adults", "non-adults"), 1),
+         sex = "male",
+         therapy = "C")
+
+data_sim_null <- bind_rows(data_female, data_male, data_similar ,data_male_outlier)
+```
+
+#### Calculate Hedges *g*
+
+```{r}
+data_sim_null <- escalc(measure = "SMD", 
+                   data = data_sim_null, # calculate  Hedges g = yi, variance of g = vi, and se
+                   m1i = m1i,
+                   sd1i = sd1i,
+                   n1i = n1i,
+                   m2i = m2i,
+                   sd2i = sd_2,
+                   n2i = n2i) %>% 
+  data.frame(.)
+```
+
+<br>
+
+### Create Outlier Variable
+
+```{r}
+data_sim_null <- data_sim_null %>% 
+  cbind(ci_lower, ci_upper) %>% 
+  relocate(study_name, yi, ci_lower, ci_upper) %>% 
+  mutate(outlier = case_when(
+    yi > 3 ~ "ES > 3",
+    TRUE ~ "ES > 3 removed",    # contains the studies that are below the cutoff, and should be included as"ES > 3 removed" Which factor
+      )) 
+```
+
+<br>
+
+### Save Data set
+
+```{r}
+write.csv2(file = "data/data_sim_null.csv", 
+           data_sim_null)
+```
+
+<br>
+
+## Specification Curve
+
+### Define all which and how factors
+
+```{r}
+age_group     <- c(unique(data_sim_null$age_group), "all groups")
+sex      <- c(unique(data_sim_null$sex), "all sexes")
+therapy  <- c(unique(data_sim_null$therapy), "all therapy")
+outlier       <- c("ES > 3 removed", "all es")
+ma_method     <- c("3-level", "rve", "reml", "fe", "uw", "p-uniform")
+```
+
+```{r}
+specifications_grid <- expand.grid(
+  age_group = age_group,
+  sex = sex,
+  therapy = therapy,
+  outlier = outlier,
+  ma_method = ma_method)
+head(specifications_grid)
+
+number_specs <- nrow(specifications_grid)
+number_specs
+```
+
+<br>
+
+### Empty specifications frame to save means, CI, p values and k
+
+```{r }
+specifications <- data.frame(specifications_grid, 
+                             mean = rep(NA, nrow(specifications_grid)), 
+                             lb = rep(NA, nrow(specifications_grid)), 
+                             ub = rep(NA, nrow(specifications_grid)), 
+                             p = rep(NA, nrow(specifications_grid)), 
+                             k = rep(NA, nrow(specifications_grid)))
+head(specifications)
+```
+
+### Giant for loop
+
+```{r}
+for(i in 1:nrow(specifications)) {
+  
+  dat <- as.data.frame(data_sim_null)
+  
+  # Determine specification subsets by using "Which" factors 
+  
+  # age_group 
+  if(specifications$age_group[i] == "adults") {
+    dat <- dat[dat$age_group == "adults", ] 
+  } else {
+    if(specifications$age_group[i] == "non-adults") {
+      dat <- dat[dat$age_group == "non-adults", ] 
+    }
+  }
+  
+  # sex  
+  if(specifications$sex[i] == "female") {
+    dat <- dat[dat$sex == "female", ] 
+  } else {
+    if(specifications$sex[i] == "male") {
+      dat <- dat[dat$sex == "male", ] 
+    }
+  }
+  
+  # rob
+  if(specifications$therapy[i] == "A") {
+    dat <- dat[dat$therapy == "A", ] 
+  } else {
+    if(specifications$therapy[i] == "B") {
+      dat <- dat[dat$therapy == "B", ] 
+    } else {
+      if(specifications$therapy[i] == "C") {
+        dat <- dat[dat$therapy == "C", ] 
+      }
+    }
+  }
+  
+  # outlier 
+  if(specifications$outlier[i] == "ES > 3 removed") {
+    dat <- dat[dat$outlier == "ES > 3 removed", ] 
+  }
+  
+  
+  # only compute meta-analytic summary effects for specification subsets with at least 2 studies/samples.
+  if(nrow(dat) < 2) next
+  
+  # Save which study/sample IDs were selected by the "Which" factors for a given specification.
+  specifications$set[i] <- paste(rownames(dat), collapse = ",")
+  
+  if(specifications$ma_method[i] == "3-level" | specifications$ma_method[i] == "rve" & sum(duplicated(dat$study_name)) > 0) { # nested effect sizes detected) if more duplicated study id
+    mod1 <- rma.mv(data = dat, 
+                   yi = yi, 
+                   V = vi, 
+                   method = "REML", 
+                   control=list(optimizer="optim", optmethod="Nelder-Mead"),
+                   random = list(~1 | es_id,
+                                 ~1 | study_name), 
+                   sparse=TRUE)
+    
+    if(specifications$ma_method[i] == "3-level") mod <- mod1
+    
+    if(specifications$ma_method[i] == "rve") mod <- robust(mod1, cluster=dat$study, clubSandwich=TRUE)
+    
+    
+  } else {
+    if(specifications$ma_method[i] == "reml" & sum(duplicated(dat$study_name)) > 0) { 
+      # average data in case of nested structure
+      
+      dat <- dat %>% 
+        select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+        escalc(yi=yi, vi=vi, data=.)
+      dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+      mod <- rma(yi = dat$yi, vi = dat$vi, 
+                 method = "REML", 
+                 control = list(stepadj = 0.5,
+                                maxiter = 2000))  
+      
+    } else {
+      if(specifications$ma_method[i] == "reml" & sum(duplicated(dat$study_name)) == 0) {
+        mod <- rma(yi = dat$yi, vi = dat$vi, 
+                   method = "REML", 
+                   control = list(stepadj = 0.5,
+                                  maxiter = 2000))  
+        
+      } else {
+        if(specifications$ma_method[i] == "fe") {
+          dat <- dat %>% 
+            select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+            escalc(yi=yi, vi=vi, data=.)
+          dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+          mod <- rma(yi = dat$yi, vi = dat$vi, 
+                     method = "FE")  
+        } else {
+          if(specifications$ma_method[i] == "uw") {
+            dat <- dat %>% 
+              select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+              escalc(yi=yi, vi=vi, data=.)
+            dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+            mod <- rma(yi = dat$yi, vi = dat$vi,
+                       method = "FE", 
+                       weights = 1/nrow(dat))
+          } else {
+            if(specifications$ma_method[i] == "p-uniform") {
+              dat <- dat %>% 
+                select(study_name, age_group, sex, therapy, outlier, yi, vi) %>% 
+                escalc(yi=yi, vi=vi, data=.)
+              dat <- as.data.frame(aggregate(dat, cluster = study_name, struct="ID"))
+              mod <- puni_star(yi = dat$yi, vi = dat$vi, 
+                               side = "right")
+              mod$b <- mod$est
+              mod$pval <- mod$pval.0 
+            }
+          }
+        }
+      }
+    }
+  }
+  specifications$mean[i] <- mod$b[[1]]
+  specifications$lb[i] <- mod$ci.lb[[1]]
+  specifications$ub[i] <- mod$ci.ub[[1]]
+  specifications$p[i] <- mod$pval[[1]]
+  specifications$k[i] <- nrow(dat)
+}
+```
+
+```{r}
+specifications
+```
+
+<br>
+
+## Cleaning specifications
+
+### Only keep specifications with at least 2 studies/samples
+
+```{r}
+specifications_full <- specifications[complete.cases(specifications),]
+```
+
+<br>
+
+### Only keep unique study/sample subsets resulting from "Which" factor combinations.
+
+```{r }
+specifications_full <- specifications_full[!duplicated(specifications_full[, c("mean", "set", "ma_method")]), ]
+```
+
+<br>
+
+### Indicator if all studies are included in the set
+
+```{r }
+specifications_full$full_set <- as.numeric(specifications_full$set == paste(1:nrow(data_sim_null), collapse =",", sep = ""))
+```
+
+<br>
+
+## Descriptives of specifications
+
+<br>
+
+### Overall
+
+```{r}
+specifications_full %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   mean_lb = mean(lb),
+                   mean_ub = mean(ub),
+                   n =n()) %>% 
+  mutate(set = "full")
+```
+
+<br>
+
+### Age Group
+
+```{r}
+specifications_full %>% 
+  group_by(age_group) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+
+<br>
+### sex
+```{r}
+specifications_full %>% 
+  group_by(sex) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+<br>
+
+
+### outlier
+```{r}
+specifications_full %>% 
+  group_by(outlier) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+
+```{r}
+specifications_full %>% 
+  group_by(therapy) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max = max(mean),
+                   min = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+<br>
+
+### ma_method
+```{r}
+specifications_full %>% 
+  group_by(ma_method) %>% 
+  dplyr::summarise(mean_g = mean(mean),
+                   max_g = max(mean),
+                   min_g = min(mean),
+                   lb = mean(lb),
+                   ub = mean(ub),
+                   n =n())
+```
+
+<br>
+
+### k
+```{r}
+specifications_full %>% 
+  ggplot(aes(x = k)) + 
+  geom_histogram(bins = 30) +
+  theme_classic()
+```
+
+<br>
+
+## Saving Specifications
+```{r}
+write.csv2(file = "data/specifications_full_null.csv", 
+           specifications_full)
+```
+

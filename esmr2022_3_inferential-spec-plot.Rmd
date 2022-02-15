@@ -1,0 +1,309 @@
+---
+title: "ESMR 2022 Multiverse Meta-Analysis"
+subtitle: "3. Inferential Specification Curve Plot"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+knit: (function(inputFile, encoding) {
+      rmarkdown::render(inputFile, 
+      encoding = encoding, 
+      output_dir = "html") })
+output:
+  html_document:
+    code_folding: show
+    highlight: pygment
+    theme: cerulean
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(metafor)
+library(tidyverse) #data management
+
+set.seed(1234)
+options(scipen = 999)
+```
+
+The code is adapted from [this paper](https://doi.org/10.1027/2151-2604/a000357). 
+
+<br>
+
+# Scenario A: True Effect
+
+## Load data 
+```{r}
+dat_boot <- read_csv2("data/data_sim.csv")
+head(dat_boot)
+```
+
+<br>
+
+```{r load-data-for-bootstrapping}
+specifications_inferential_spec_curve <- read.csv2(file = "data/specifications_full.csv")
+```
+
+<br>
+
+### Load unique specification study subsets found via the "Which" factors 
+```{r load-unique-which-factor-combinations-bootstrapping}
+sets <- as.vector(unique(specifications_inferential_spec_curve$set))
+sets <- lapply(strsplit(sets, ","), as.numeric)
+```
+
+<br>
+
+## Set up loop under null scenario
+
+### Number of specifications (number of unique study subsets times number of How Factor Combinations)
+```{r number-of-specifications-for-bootstrapping}
+no_spec <- length(sets) * 4 # no RVE and puniform
+```
+
+<br>
+
+### Number of iterations
+
+This runs for a long time if you do 1000 iterations!
+
+```{r}
+iter <- 10 # 1000
+```
+
+<br>
+
+### Matrix to save bootstrapped specification curves
+```{r}
+# Matrix to save bootstrapped specification curves
+res <- matrix(numeric(iter * no_spec), ncol = iter)
+```
+
+### spec_list() function
+```{r}
+# Function that takes the ids of studies for each unique specification regarding the included studies (Which factors), 
+# and computes the resulting summary effect for each of the 4 "How factors".
+spec_list  <- function(ids, data) {
+  temp <- data[ids, ]
+  spec <- 
+    c(rma(yi = yi,  # FE
+          sei = sei, 
+          method = "FE", 
+          data = temp)$b[[1]],
+      rma(yi = yi, # REML
+          sei = sei, 
+          method = "REML", 
+          control = list(stepadj = 0.5, maxiter = 2000), 
+          data = temp)$b[[1]],
+      rma(yi = yi, # UW
+          sei = sei, 
+          method = "FE", 
+          weights = 1/nrow(temp), 
+          data = temp)$b[[1]],
+      rma.mv(yi = yi, 
+                   V = vi, 
+                   method = "REML", 
+                   control=list(optimizer="optim", optmethod="Nelder-Mead"),
+                   random = list(~1 | es_id,
+                                 ~1 | study_name), 
+                   sparse=TRUE,
+             data  = temp)$b[[1]]
+      )
+  spec
+}
+```
+
+## Loop to draw specification curves under the null hypothesis iter times
+```{r}
+for(j in 1:iter) {
+  # Draw randomly new effect sizes (Cohens d) from a normal distribution with SE = 1/sqrt(N - 3) 
+  # and expectation 0 for each study in the data set
+  dat_boot  <- dat_boot %>% 
+    # ES of simulated data
+    mutate(yi = rnorm(nrow(dat_boot), 
+                        mean = 0, 
+                        sd = 1/sqrt(n - 3)),
+           # sei of simulated data
+           sei = 1/sqrt(n - 3))
+  # Store the sorted summary effects for each specification (i.e. the null specifaction curves)
+  res[, j] <- sort(unlist(lapply(sets, FUN = function(x) spec_list(x, data = dat_boot))))
+}
+
+# Compute the 2.5% and 97.5% quantile of all specifiaction curves for each position as reference
+boot_lb <- apply(res, 1, function(x) {quantile(x, probs = 0.025)})
+boot_ub <- apply(res, 1, function(x) {quantile(x, probs = 0.975)})
+
+# Save bootstrap upper and lower limits together with the observed specification curve
+specifications_inferential_spec_curve <- specifications_inferential_spec_curve %>% 
+  filter(ma_method %in% c("fe", "reml", "uw", "3-level"))
+
+dat_boot <- data.frame(xvar = 1:no_spec, obs = sort(specifications_inferential_spec_curve$mean), boot_lb, boot_ub)
+write.csv2(file = "data/inferential_data.csv", dat_boot)
+```
+
+## Plot
+```{r}
+boot_plot <- 
+  ggplot(data = dat_boot, aes(x = xvar, y = obs)) +
+  geom_ribbon(aes(x =  xvar, ymin = boot_lb*10, ymax = boot_ub*10),  # multiplication just to visualize this simulated example!!!
+              fill = "gray", color = "black", lty = "dotted", alpha = 0.7, size = 0.25) +
+  geom_line(col = "firebrick", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = 2, size = 0.25) +
+  scale_x_continuous(name = "Specification number") +
+  scale_y_continuous(name = "Summary effect") +
+  ggtitle("Inferential Specification Curve") +
+  coord_cartesian(xlim = c(0.5, nrow(dat_boot) + 0.5), expand = FALSE) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+boot_plot
+```
+
+<br>
+
+### Save Plot
+```{r}
+ggsave("figures/boot_plot.png", 
+       plot = boot_plot, 
+       dpi = "retina",
+       height = 7.5, 
+       width = 10, 
+       units = "cm")
+```
+
+<br>
+
+# Scenario B: Null Effect
+
+## Load data
+```{r}
+dat_boot <- read_csv2("data/data_sim_null.csv")
+head(dat_boot)
+```
+
+<br>
+
+### Load unique specification study subsets found via the "Which" factors 
+```{r  }
+sets <- as.vector(unique(specifications_inferential_spec_curve$set))
+sets <- lapply(strsplit(sets, ","), as.numeric)
+```
+
+<br>
+
+## Set up loop under null scenario
+
+### Number of specifications (number of unique study subsets times number of How Factor Combinations)
+```{r  }
+no_spec <- length(sets) * 4 # no RVE and puniform
+```
+<br>
+
+### Number of iterations
+
+This runs for a long time if you do 1000 iterations!
+```{r}
+iter <- 10 # 1000
+```
+
+<br>
+
+### Matrix to save bootstrapped specification curves
+```{r}
+res <- matrix(numeric(iter * no_spec), ncol = iter)
+```
+
+
+### spec_list() function
+```{r}
+# Function that takes the ids of studies for each unique specification regarding the included studies (Which factors), 
+# and computes the resulting summary effect for each of the 8 "How factors".
+spec_list  <- function(ids, data) {
+  temp <- data[ids, ]
+  spec <- 
+    c(rma(yi = yi,  # FE
+          sei = sei, 
+          method = "FE", 
+          data = temp)$b[[1]],
+      rma(yi = yi, # REML
+          sei = sei, 
+          method = "REML", 
+          control = list(stepadj = 0.5, maxiter = 2000), 
+          data = temp)$b[[1]],
+      rma(yi = yi, # UW
+          sei = sei, 
+          method = "FE", 
+          weights = 1/nrow(temp), 
+          data = temp)$b[[1]],
+      rma.mv(yi = yi, 
+                   V = vi, 
+                   method = "REML", 
+                   control=list(optimizer="optim", optmethod="Nelder-Mead"),
+                   random = list(~1 | es_id,
+                                 ~1 | study_name), 
+                   sparse=TRUE,
+             data  = temp)$b[[1]]
+      )
+  spec
+}
+```
+
+<br>
+
+## Loop to draw specification curves under the null hypothesis iter times
+
+```{r}
+for(j in 1:iter) {
+  # Draw randomly new effect sizes (Cohens d) from a normal distribution with SE = 1/sqrt(N - 3) 
+  # and expectation 0 for each study in the data set
+  dat_boot  <- dat_boot %>% 
+    # ES of simulated data
+    mutate(yi = rnorm(nrow(dat_boot), 
+                        mean = 0, 
+                        sd = 1/sqrt(n - 3)),
+           # sei of simulated data
+           sei = 1/sqrt(n - 3))
+  # Store the sorted summary effects for each specification (i.e. the null specifaction curves)
+  res[, j] <- sort(unlist(lapply(sets, FUN = function(x) spec_list(x, data = dat_boot))))
+}
+
+# Compute the 2.5% and 97.5% quantile of all specifiaction curves for each position as reference
+boot_lb <- apply(res, 1, function(x) {quantile(x, probs = 0.025)})
+boot_ub <- apply(res, 1, function(x) {quantile(x, probs = 0.975)})
+
+# Save bootstrap upper and lower limits together with the observed specification curve
+specifications_inferential_spec_curve <- specifications_inferential_spec_curve %>% 
+  filter(ma_method %in% c("fe", "reml", "uw", "3-level"))
+
+dat_boot_null <- data.frame(xvar = 1:no_spec, obs = sort(specifications_inferential_spec_curve$mean), boot_lb, boot_ub)
+write.csv2(file = "data/inferential_data_null.csv", dat_boot)
+```
+
+
+## Plot
+```{r}
+boot_plot_null <- 
+  ggplot(data = dat_boot_null, aes(x = xvar, y = obs)) +
+  geom_ribbon(aes(x =  xvar, ymin = boot_lb *10, ymax = boot_ub*10), # multiplication x10 for visualization purposes only!!!
+              fill = "gray", color = "black", lty = "dotted", alpha = 0.7, size = 0.25) +
+  geom_line(col = "firebrick", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = 2, size = 0.25) +
+  scale_x_continuous(name = "Specification number") +
+  scale_y_continuous(name = "Summary effect") +
+  ggtitle("Inferential Specification Curve") +
+  coord_cartesian(xlim = c(0.5, nrow(dat_boot_null) + 0.5), expand = FALSE) +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+
+### Save Plot
+```{r}
+ggsave("figures/boot_plot-null.pdf", 
+       plot = boot_plot_null, 
+       dpi = "retina",
+       height = 7.5, 
+       width = 10, 
+       units = "cm")
+```
