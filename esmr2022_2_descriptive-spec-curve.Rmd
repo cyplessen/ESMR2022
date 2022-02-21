@@ -29,6 +29,7 @@ set.seed(42)
 The code is adapted from [this paper](https://doi.org/10.1027/2151-2604/a000357). 
 
 <br>
+
 # Scenario A: Real Effect
 
 ## Descriptive Specification Plot
@@ -628,9 +629,9 @@ yrng <- range(c(0, specifications_full$lb, specifications_full$ub))
 
 #ylimit <- round(c(yrng[1] - diff(yrng)*0.1, yrng[2] + diff(yrng)*0.1), 1)
 
-ylimit <- c(-2, 3)
+ylimit <- c(-.5, 2)
 #y_breaks_forest <- round(seq(from = round(ylimit[1], 1), to = round(ylimit[2], 1), by = 0.5), 2)
-y_breaks_forest <- seq(-1.5, 3, 0.25)
+y_breaks_forest <- seq(-.25, 1.75, 0.25)
 
 y_labels_forest <- format(y_breaks_forest, nsmall = 2)
 y_breaks_forest <- c(ylimit[1], y_breaks_forest)
