@@ -48,8 +48,8 @@ data_female <- tibble( # I
   rowwise() %>%
   mutate(m1i = rnorm(1, mean = 10, sd = 0.5),
          m2i = rnorm(1, mean = 8, sd = 0.5),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          n =n1i + n2i,
@@ -69,8 +69,8 @@ data_male <- tibble(
   rowwise() %>%
   mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
          m2i = rnorm(1, mean = 9, sd = 0.5),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          n = n1i + n2i,
@@ -89,8 +89,8 @@ data_similar <- tibble(
   rowwise() %>%
   mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
          m2i = rnorm(1, mean = 7, sd = 0.5),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          n = n1i + n2i,
@@ -153,8 +153,6 @@ Any effect size larger than this seems unreasonable to me and must be an outlier
 
 ```{r}
 data_sim <- data_sim %>% 
-  cbind(ci_lower, ci_upper) %>% 
-  relocate(study_name, yi, ci_lower, ci_upper) %>% 
   mutate(outlier = case_when(
     yi > 3 ~ "ES > 3",
     TRUE ~ "ES > 3 removed",
@@ -498,14 +496,14 @@ data_female <- tibble( # I
   es_id = 1:20, # unique effect size ids
   study_name = c(paste("Study", 1:10), paste("Study", sort(rep(11:15, 2))))) %>% # unique study id
   rowwise() %>%
-  mutate(m1i = rnorm(1, mean = 10, sd = 2),
-         m2i = rnorm(1, mean = 10, sd = 2),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5),
+         m2i = rnorm(1, mean = 10, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
-         
          n =n1i + n2i,
+         
          age_group = sample(c("adults", "non-adults"), 1), # age should be random for this example
          sex = "female",
          therapy = "A")
@@ -514,10 +512,10 @@ data_male <- tibble(
   es_id = 21:40,
   study_name = c(paste("Study", 16:25), paste("Study", sort(rep(26:30, 2))))) %>% 
   rowwise() %>%
-  mutate(m1i = rnorm(1, mean = 10, sd = 2), 
-         m2i = rnorm(1, mean = 10, sd = 2),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
+         m2i = rnorm(1, mean = 10, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          
@@ -530,10 +528,10 @@ data_similar<- tibble(
   es_id = 41:60,
   study_name = c(paste("Study", 31:40), paste("Study", sort(rep(41:45, 2))))) %>% 
   rowwise() %>%
-  mutate(m1i = rnorm(1, mean = 10, sd = 2), 
-         m2i = rnorm(1, mean = 10, sd = 2),
-         sd1i = rnorm(1, mean = 2, sd = 0.5),
-         sd_2 = rnorm(1, mean = 2, sd = 0.5),
+  mutate(m1i = rnorm(1, mean = 10, sd = 0.5), 
+         m2i = rnorm(1, mean = 10, sd = 0.5),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          n =n1i + n2i,
@@ -546,9 +544,9 @@ data_male_outlier <- tibble(
   study_name = c(paste("Study",46:50))) %>% 
   rowwise() %>%
   mutate(m1i = rnorm(1, mean = 10, sd = .22), 
-         m2i = rnorm(1, mean = 9, sd = .22),
-         sd1i = rnorm(1, mean = 1, sd = 0.1),
-         sd_2 = rnorm(1, mean = 1, sd = 0.1),
+         m2i = rnorm(1, mean = 10, sd = .22),
+         sd1i = rnorm(1, mean = 2, sd = 0),
+         sd_2 = rnorm(1, mean = 2, sd = 0),
          n1i = sample(10:100, 1),
          n2i = n1i,
          
@@ -580,8 +578,6 @@ data_sim_null <- escalc(measure = "SMD",
 
 ```{r}
 data_sim_null <- data_sim_null %>% 
-  cbind(ci_lower, ci_upper) %>% 
-  relocate(study_name, yi, ci_lower, ci_upper) %>% 
   mutate(outlier = case_when(
     yi > 3 ~ "ES > 3",
     TRUE ~ "ES > 3 removed",    # contains the studies that are below the cutoff, and should be included as"ES > 3 removed" Which factor
@@ -764,10 +760,6 @@ for(i in 1:nrow(specifications)) {
   specifications$p[i] <- mod$pval[[1]]
   specifications$k[i] <- nrow(dat)
 }
-```
-
-```{r}
-specifications
 ```
 
 <br>
